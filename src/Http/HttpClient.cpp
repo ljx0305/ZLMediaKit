@@ -1,28 +1,12 @@
 ﻿/*
-* MIT License
-*
-* Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
-*
-* This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
-*
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the "Software"), to deal
-* in the Software without restriction, including without limitation the rights
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ *
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ *
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
+ */
 
 #include <cstdlib>
 #include "HttpClient.h"
@@ -62,6 +46,7 @@ void HttpClient::sendRequest(const string &strUrl, float fTimeOutSec) {
     if (_path.empty()) {
         _path = "/";
     }
+    auto host_header = host;
     uint16_t port = atoi(FindField(host.data(), ":", NULL).data());
     if (port <= 0) {
         //默认端口
@@ -70,8 +55,8 @@ void HttpClient::sendRequest(const string &strUrl, float fTimeOutSec) {
         //服务器域名
         host = FindField(host.data(), NULL, ":");
     }
-    _header.emplace("Host", host);
-    _header.emplace("Tools", "ZLMediaKit");
+    _header.emplace("Host", host_header);
+    _header.emplace("Tools", SERVER_NAME);
     _header.emplace("Connection", "keep-alive");
     _header.emplace("Accept", "*/*");
     _header.emplace("Accept-Language", "zh-CN,zh;q=0.8");
@@ -115,9 +100,6 @@ void HttpClient::onConnect(const SockException &ex) {
         return;
     }
 
-    //先假设http客户端只会接收一点点数据（只接受http头，节省内存）
-    _sock->setReadBuffer(std::make_shared<BufferRaw>(1 * 1024));
-
     _totalBodySize = 0;
     _recvedBodySize = 0;
     HttpRequestSplitter::reset();
@@ -129,7 +111,7 @@ void HttpClient::onConnect(const SockException &ex) {
         printer << pr.first + ": ";
         printer << pr.second + "\r\n";
     }
-    send(printer << "\r\n");
+    SockSender::send(printer << "\r\n");
     onFlush();
 }
 
@@ -147,7 +129,7 @@ void HttpClient::onErr(const SockException &ex) {
     onDisconnect(ex);
 }
 
-int64_t HttpClient::onRecvHeader(const char *data, uint64_t len) {
+ssize_t HttpClient::onRecvHeader(const char *data, size_t len) {
     _parser.Parse(data);
     if(_parser.Url() == "302" || _parser.Url() == "301"){
         auto newUrl = _parser["Location"];
@@ -163,8 +145,8 @@ int64_t HttpClient::onRecvHeader(const char *data, uint64_t len) {
         }
     }
 
-    checkCookie(_parser.getValues());
-    _totalBodySize = onResponseHeader(_parser.Url(), _parser.getValues());
+    checkCookie(_parser.getHeader());
+    _totalBodySize = onResponseHeader(_parser.Url(), _parser.getHeader());
 
     if(!_parser["Content-Length"].empty()){
         //有Content-Length字段时忽略onResponseHeader的返回值
@@ -172,15 +154,12 @@ int64_t HttpClient::onRecvHeader(const char *data, uint64_t len) {
     }
 
     if(_parser["Transfer-Encoding"] == "chunked"){
-        //我们认为这种情况下后面应该有大量的数据过来，加大接收缓存提高性能
-        _sock->setReadBuffer(std::make_shared<BufferRaw>(256 * 1024));
-
         //如果Transfer-Encoding字段等于chunked，则认为后续的content是不限制长度的
         _totalBodySize = -1;
-        _chunkedSplitter = std::make_shared<HttpChunkedSplitter>([this](const char *data,uint64_t len){
+        _chunkedSplitter = std::make_shared<HttpChunkedSplitter>([this](const char *data,size_t len){
             if(len > 0){
                 auto recvedBodySize = _recvedBodySize + len;
-                onResponseBody(data, len, recvedBodySize, INT64_MAX);
+                onResponseBody(data, len, recvedBodySize, SIZE_MAX);
                 _recvedBodySize = recvedBodySize;
             }else{
                 onResponseCompleted_l();
@@ -199,31 +178,24 @@ int64_t HttpClient::onRecvHeader(const char *data, uint64_t len) {
     //但是由于我们没必要等content接收完毕才回调onRecvContent(因为这样浪费内存并且要多次拷贝数据)
     //所以返回-1代表我们接下来分段接收content
     _recvedBodySize = 0;
-    if(_totalBodySize > 0){
-        //根据_totalBodySize设置接收缓存大小
-        _sock->setReadBuffer(std::make_shared<BufferRaw>(MIN(_totalBodySize + 1,256 * 1024)));
-    }else{
-        _sock->setReadBuffer(std::make_shared<BufferRaw>(256 * 1024));
-    }
-
     return -1;
 }
 
-void HttpClient::onRecvContent(const char *data, uint64_t len) {
+void HttpClient::onRecvContent(const char *data, size_t len) {
     if(_chunkedSplitter){
         _chunkedSplitter->input(data,len);
         return;
     }
     auto recvedBodySize = _recvedBodySize + len;
     if(_totalBodySize < 0){
-        //不限长度的content,最大支持INT64_MAX个字节
-        onResponseBody(data, len, recvedBodySize, INT64_MAX);
+        //不限长度的content,最大支持SIZE_MAX个字节
+        onResponseBody(data, len, recvedBodySize, SIZE_MAX);
         _recvedBodySize = recvedBodySize;
         return;
     }
 
     //固定长度的content
-    if ( recvedBodySize < _totalBodySize ) {
+    if (recvedBodySize < (size_t)_totalBodySize ) {
         //content还未接收完毕
         onResponseBody(data, len, recvedBodySize, _totalBodySize);
         _recvedBodySize = recvedBodySize;
@@ -232,7 +204,7 @@ void HttpClient::onRecvContent(const char *data, uint64_t len) {
 
     //content接收完毕
     onResponseBody(data, _totalBodySize - _recvedBodySize, _totalBodySize, _totalBodySize);
-    bool biggerThanExpected = recvedBodySize > _totalBodySize;
+    bool biggerThanExpected = recvedBodySize > (size_t)_totalBodySize;
     onResponseCompleted_l();
     if(biggerThanExpected) {
         //声明的content数据比真实的小，那么我们只截取前面部分的并断开链接
@@ -242,8 +214,9 @@ void HttpClient::onRecvContent(const char *data, uint64_t len) {
 
 void HttpClient::onFlush() {
     _aliveTicker.resetTime();
+    GET_CONFIG(uint32_t,sendBufSize,Http::kSendBufSize);
     while (_body && _body->remainSize() && !isSocketBusy()) {
-        auto buffer = _body->readData();
+        auto buffer = _body->readData(sendBufSize);
         if (!buffer) {
             //数据发送结束或读取数据异常
             break;

@@ -1,27 +1,11 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #ifndef ZLMEDIAKIT_FRAME_H
@@ -38,20 +22,60 @@ using namespace toolkit;
 namespace mediakit{
 
 typedef enum {
-    CodecInvalid = -1,
-    CodecH264 = 0,
-    CodecH265,
-    CodecAAC,
-    CodecMax = 0x7FFF
-} CodecId;
-
-typedef enum {
     TrackInvalid = -1,
     TrackVideo = 0,
     TrackAudio,
     TrackTitle,
-    TrackMax = 0x7FFF
+    TrackApplication,
+    TrackMax
 } TrackType;
+
+#define CODEC_MAP(XX) \
+    XX(CodecH264,  TrackVideo, 0, "H264")          \
+    XX(CodecH265,  TrackVideo, 1, "H265")          \
+    XX(CodecAAC,   TrackAudio, 2, "mpeg4-generic") \
+    XX(CodecG711A, TrackAudio, 3, "PCMA")          \
+    XX(CodecG711U, TrackAudio, 4, "PCMU")          \
+    XX(CodecOpus,  TrackAudio, 5, "opus")          \
+    XX(CodecL16,   TrackAudio, 6, "L16")           \
+    XX(CodecVP8,   TrackVideo, 7, "VP8")           \
+    XX(CodecVP9,   TrackVideo, 8, "VP9")           \
+    XX(CodecAV1,   TrackVideo, 9, "AV1X")
+
+typedef enum {
+    CodecInvalid = -1,
+#define XX(name, type, value, str) name = value,
+    CODEC_MAP(XX)
+#undef XX
+    CodecMax
+} CodecId;
+
+/**
+ * 字符串转媒体类型转
+ */
+TrackType getTrackType(const string &str);
+
+/**
+ * 媒体类型转字符串
+ */
+const char* getTrackString(TrackType type);
+
+/**
+ * 根据SDP中描述获取codec_id
+ * @param str
+ * @return
+ */
+CodecId getCodecId(const string &str);
+
+/**
+ * 获取编码器名称
+ */
+const char *getCodecName(CodecId codecId);
+
+/**
+ * 获取音视频类型
+ */
+TrackType getTrackType(CodecId codecId);
 
 /**
  * 编码信息的抽象接口
@@ -64,14 +88,19 @@ public:
     virtual ~CodecInfo(){}
 
     /**
-     * 获取音视频类型
-     */
-    virtual TrackType getTrackType() const  = 0;
-
-    /**
      * 获取编解码器类型
      */
     virtual CodecId getCodecId() const = 0;
+
+    /**
+     * 获取编码器名称
+     */
+    const char *getCodecName() const;
+
+    /**
+     * 获取音视频类型
+     */
+    TrackType getTrackType() const;
 };
 
 /**
@@ -81,25 +110,14 @@ class Frame : public Buffer, public CodecInfo {
 public:
     typedef std::shared_ptr<Frame> Ptr;
     virtual ~Frame(){}
-    /**
-     * 时间戳,已经废弃，请使用dts() 、pts()接口
-     */
-    inline uint32_t stamp() const {
-        return dts();
-    };
-
 
     /**
      * 返回解码时间戳，单位毫秒
-     * @return
      */
     virtual uint32_t dts() const = 0;
 
-
-
     /**
      * 返回显示时间戳，单位毫秒
-     * @return
      */
     virtual uint32_t pts() const {
         return dts();
@@ -109,17 +127,15 @@ public:
      * 前缀长度，譬如264前缀为0x00 00 00 01,那么前缀长度就是4
      * aac前缀则为7个字节
      */
-    virtual uint32_t prefixSize() const = 0;
+    virtual size_t prefixSize() const = 0;
 
     /**
      * 返回是否为关键帧
-     * @return
      */
     virtual bool keyFrame() const = 0;
 
     /**
      * 是否为配置帧，譬如sps pps vps
-     * @return
      */
     virtual bool configFrame() const = 0;
 
@@ -129,44 +145,126 @@ public:
     virtual bool cacheAble() const { return true; }
 
     /**
+     * 该帧是否可以丢弃
+     * SEI/AUD帧可以丢弃
+     * 默认都不能丢帧
+     */
+    virtual bool dropAble() const { return false; }
+
+    /**
+     * 是否为可解码帧
+     * sps pps等帧不能解码
+     */
+    virtual bool decodeAble() const {
+        if (getTrackType() != TrackVideo) {
+            //非视频帧都可以解码
+            return true;
+        }
+        //默认非sps pps帧都可以解码
+        return !configFrame();
+    }
+
+    /**
      * 返回可缓存的frame
-     * @return
      */
     static Ptr getCacheAbleFrame(const Ptr &frame);
+
+private:
+    //对象个数统计
+    ObjectStatistic<Frame> _statistic;
+};
+
+class FrameImp : public Frame {
+public:
+    using Ptr = std::shared_ptr<FrameImp>;
+
+    template<typename C=FrameImp>
+    static std::shared_ptr<C> create();
+
+    char *data() const override{
+        return (char *)_buffer.data();
+    }
+
+    size_t size() const override {
+        return _buffer.size();
+    }
+
+    uint32_t dts() const override {
+        return _dts;
+    }
+
+    uint32_t pts() const override{
+        return _pts ? _pts : _dts;
+    }
+
+    size_t prefixSize() const override{
+        return _prefix_size;
+    }
+
+    CodecId getCodecId() const override{
+        return _codec_id;
+    }
+
+    bool keyFrame() const override {
+        return false;
+    }
+
+    bool configFrame() const override{
+        return false;
+    }
+
+public:
+    CodecId _codec_id = CodecInvalid;
+    uint32_t _dts = 0;
+    uint32_t _pts = 0;
+    size_t _prefix_size = 0;
+    BufferLikeString _buffer;
+
+private:
+    //对象个数统计
+    ObjectStatistic<FrameImp> _statistic;
+
+protected:
+    friend class ResourcePool_l<FrameImp>;
+    FrameImp() = default;
+
+    template<typename C>
+    static std::shared_ptr<C> create_l();
 };
 
 /**
- * 循环池辅助类
- * @tparam T
+ * 一个Frame类中可以有多个帧，他们通过 0x 00 00 01 分隔
+ * ZLMediaKit会先把这种复合帧split成单个帧然后再处理
+ * 一个复合帧可以通过无内存拷贝的方式切割成多个子Frame
+ * 提供该类的目的是切割复合帧时防止内存拷贝，提高性能
  */
-template <typename T>
-class ResourcePoolHelper{
+template<typename Parent>
+class FrameInternal : public Parent{
 public:
-    ResourcePoolHelper(int size = 8){
-        _pool.setSize(size);
+    typedef std::shared_ptr<FrameInternal> Ptr;
+    FrameInternal(const Frame::Ptr &parent_frame, char *ptr, size_t size, size_t prefix_size)
+            : Parent(ptr, size, parent_frame->dts(), parent_frame->pts(), prefix_size) {
+        _parent_frame = parent_frame;
     }
-    virtual ~ResourcePoolHelper(){}
-
-    std::shared_ptr<T> obtainObj(){
-        return _pool.obtain();
+    bool cacheAble() const override {
+        return _parent_frame->cacheAble();
     }
 private:
-    ResourcePool<T> _pool;
+    Frame::Ptr _parent_frame;
 };
 
 /**
- * 写帧接口的抽闲接口
+ * 写帧接口的抽象接口类
  */
 class FrameWriterInterface {
 public:
     typedef std::shared_ptr<FrameWriterInterface> Ptr;
-
     FrameWriterInterface(){}
     virtual ~FrameWriterInterface(){}
+
     /**
-    * 写入帧数据
-    * @param frame 帧
-    */
+     * 写入帧数据
+     */
     virtual void inputFrame(const Frame::Ptr &frame) = 0;
 };
 
@@ -180,16 +278,16 @@ public:
 
     /**
      * inputFrame后触发onWriteFrame回调
-     * @param cb
      */
     FrameWriterInterfaceHelper(const onWriteFrame& cb){
         _writeCallback = cb;
     }
+
     virtual ~FrameWriterInterfaceHelper(){}
+
     /**
-    * 写入帧数据
-    * @param frame 帧
-    */
+     * 写入帧数据
+     */
     void inputFrame(const Frame::Ptr &frame) override {
         _writeCallback(frame);
     }
@@ -197,105 +295,64 @@ private:
     onWriteFrame _writeCallback;
 };
 
-
-/**
- * 帧环形缓存接口类
- */
-class FrameRingInterface : public FrameWriterInterface{
-public:
-    typedef RingBuffer<Frame::Ptr> RingType;
-    typedef std::shared_ptr<FrameRingInterface> Ptr;
-
-    FrameRingInterface(){}
-    virtual ~FrameRingInterface(){}
-
-    /**
-     * 获取帧环形缓存
-     * @return
-     */
-    virtual RingType::Ptr getFrameRing() const = 0;
-
-    /**
-     * 设置帧环形缓存
-     * @param ring
-     */
-    virtual void setFrameRing(const RingType::Ptr &ring)  = 0;
-};
-
-/**
- * 帧环形缓存
- */
-class FrameRing : public FrameRingInterface{
-public:
-    typedef std::shared_ptr<FrameRing> Ptr;
-
-    FrameRing(){
-    }
-    virtual ~FrameRing(){}
-
-    /**
-     * 获取帧环形缓存
-     * @return
-     */
-    RingType::Ptr getFrameRing() const override {
-        return _frameRing;
-    }
-
-    /**
-     * 设置帧环形缓存
-     * @param ring
-     */
-    void setFrameRing(const RingType::Ptr &ring) override {
-        _frameRing = ring;
-    }
-
-    /**
-     * 输入数据帧
-     * @param frame
-     */
-    void inputFrame(const Frame::Ptr &frame) override{
-        if(_frameRing){
-            _frameRing->write(frame,frame->keyFrame());
-        }
-    }
-protected:
-    RingType::Ptr _frameRing;
-};
-
 /**
  * 支持代理转发的帧环形缓存
  */
-class FrameRingInterfaceDelegate : public FrameRing {
+class FrameDispatcher : public FrameWriterInterface {
 public:
-    typedef std::shared_ptr<FrameRingInterfaceDelegate> Ptr;
+    typedef std::shared_ptr<FrameDispatcher> Ptr;
 
-    FrameRingInterfaceDelegate(){}
-    virtual ~FrameRingInterfaceDelegate(){}
+    FrameDispatcher(){}
+    virtual ~FrameDispatcher(){}
 
+    /**
+     * 添加代理
+     */
     void addDelegate(const FrameWriterInterface::Ptr &delegate){
+        //_delegates_write可能多线程同时操作
         lock_guard<mutex> lck(_mtx);
-        _delegateMap.emplace(delegate.get(),delegate);
-    }
-
-    void delDelegate(void *ptr){
-        lock_guard<mutex> lck(_mtx);
-        _delegateMap.erase(ptr);
+        _delegates_write.emplace(delegate.get(),delegate);
+        _need_update = true;
     }
 
     /**
-     * 写入帧数据
-     * @param frame 帧
+     * 删除代理
+     */
+    void delDelegate(FrameWriterInterface *ptr){
+        //_delegates_write可能多线程同时操作
+        lock_guard<mutex> lck(_mtx);
+        _delegates_write.erase(ptr);
+        _need_update = true;
+    }
+
+    /**
+     * 写入帧并派发
      */
     void inputFrame(const Frame::Ptr &frame) override{
-        FrameRing::inputFrame(frame);
-        lock_guard<mutex> lck(_mtx);
-        for(auto &pr : _delegateMap){
+        if(_need_update){
+            //发现代理列表发生变化了，这里同步一次
+            lock_guard<mutex> lck(_mtx);
+            _delegates_read = _delegates_write;
+            _need_update = false;
+        }
+
+        //_delegates_read能确保是单线程操作的
+        for(auto &pr : _delegates_read){
             pr.second->inputFrame(frame);
         }
     }
+
+    /**
+     * 返回代理个数
+     */
+    size_t size() const {
+        return _delegates_write.size();
+    }
 private:
     mutex _mtx;
-    map<void *,FrameWriterInterface::Ptr>  _delegateMap;
+    map<void *,FrameWriterInterface::Ptr>  _delegates_read;
+    map<void *,FrameWriterInterface::Ptr>  _delegates_write;
+    bool _need_update = false;
 };
 
 /**
@@ -304,10 +361,25 @@ private:
 class FrameFromPtr : public Frame{
 public:
     typedef std::shared_ptr<FrameFromPtr> Ptr;
+
+    FrameFromPtr(CodecId codec_id, char *ptr, size_t size, uint32_t dts, uint32_t pts = 0, size_t prefix_size = 0)
+            : FrameFromPtr(ptr, size, dts, pts, prefix_size) {
+        _codec_id = codec_id;
+    }
+
+    FrameFromPtr(char *ptr, size_t size, uint32_t dts, uint32_t pts = 0, size_t prefix_size = 0){
+        _ptr = ptr;
+        _size = size;
+        _dts = dts;
+        _pts = pts;
+        _prefix_size = prefix_size;
+    }
+
     char *data() const override{
         return _ptr;
     }
-    uint32_t size() const override {
+
+    size_t size() const override {
         return _size;
     }
 
@@ -316,105 +388,120 @@ public:
     }
 
     uint32_t pts() const override{
-        if(_pts){
-            return _pts;
-        }
-        return dts();
+        return _pts ? _pts : dts();
     }
 
-    uint32_t prefixSize() const override{
-        return _prefixSize;
+    size_t prefixSize() const override{
+        return _prefix_size;
     }
-protected:
-    char *_ptr;
-    uint32_t _size;
-    uint32_t _dts;
-    uint32_t _pts = 0;
-    uint32_t _prefixSize;
-};
 
-/**
- * 不可缓存的帧，在DevChannel类中有用到。
- * 该帧类型用于防止内存拷贝，直接使用指针传递数据
- * 在大多数情况下，ZLMediaKit是同步对帧数据进行使用和处理的
- * 所以提供此类型的帧很有必要，但是有时又无法避免缓存帧做后续处理
- * 所以可以通过Frame::getCacheAbleFrame方法拷贝一个可缓存的帧
- */
-class FrameNoCacheAble : public FrameFromPtr{
-public:
-    typedef std::shared_ptr<FrameNoCacheAble> Ptr;
-
-    /**
-     * 该帧不可缓存
-     * @return
-     */
     bool cacheAble() const override {
         return false;
     }
+
+    CodecId getCodecId() const override {
+        if (_codec_id == CodecInvalid) {
+            throw std::invalid_argument("FrameFromPtr对象未设置codec类型");
+        }
+        return _codec_id;
+    }
+
+    void setCodecId(CodecId codec_id) {
+        _codec_id = codec_id;
+    }
+
+    bool keyFrame() const override {
+        return false;
+    }
+
+    bool configFrame() const override{
+        return false;
+    }
+
+protected:
+    FrameFromPtr() {}
+
+protected:
+    char *_ptr;
+    uint32_t _dts;
+    uint32_t _pts = 0;
+    size_t _size;
+    size_t _prefix_size;
+    CodecId _codec_id = CodecInvalid;
 };
 
 /**
- * 该对象的功能是把一个不可缓存的帧转换成可缓存的帧
- * @see FrameNoCacheAble
+ * 该对象可以把Buffer对象转换成可缓存的Frame对象
  */
-class FrameCacheAble : public FrameFromPtr {
+template <typename Parent>
+class FrameWrapper : public Parent{
 public:
-    typedef std::shared_ptr<FrameCacheAble> Ptr;
-
-    FrameCacheAble(const Frame::Ptr &frame){
-        if(frame->cacheAble()){
-            _frame = frame;
-            _ptr = frame->data();
-        }else{
-            _buffer = std::make_shared<BufferRaw>();
-            _buffer->assign(frame->data(),frame->size());
-            _ptr = _buffer->data();
-        }
-        _size = frame->size();
-        _dts = frame->dts();
-        _pts = frame->pts();
-        _prefixSize = frame->prefixSize();
-        _trackType = frame->getTrackType();
-        _codec = frame->getCodecId();
-        _key = frame->keyFrame();
-        _config = frame->configFrame();
-    }
-
-    virtual ~FrameCacheAble() = default;
+    ~FrameWrapper() = default;
 
     /**
-     * 可以被缓存
-     * @return
+     * 构造frame
+     * @param buf 数据缓存
+     * @param dts 解码时间戳
+     * @param pts 显示时间戳
+     * @param prefix 帧前缀长度
+     * @param offset buffer有效数据偏移量
+     */
+    FrameWrapper(const Buffer::Ptr &buf, uint32_t dts, uint32_t pts, size_t prefix, size_t offset) : Parent(buf->data() + offset, buf->size() - offset, dts, pts, prefix){
+        _buf = buf;
+    }
+
+    /**
+     * 构造frame
+     * @param buf 数据缓存
+     * @param dts 解码时间戳
+     * @param pts 显示时间戳
+     * @param prefix 帧前缀长度
+     * @param offset buffer有效数据偏移量
+     * @param codec 帧类型
+     */
+    FrameWrapper(const Buffer::Ptr &buf, uint32_t dts, uint32_t pts, size_t prefix, size_t offset, CodecId codec) : Parent(codec, buf->data() + offset, buf->size() - offset, dts, pts, prefix){
+        _buf = buf;
+    }
+
+    /**
+     * 该帧可缓存
      */
     bool cacheAble() const override {
         return true;
     }
 
-    TrackType getTrackType() const override{
-        return _trackType;
-    }
-
-    CodecId getCodecId() const override{
-        return _codec;
-    }
-
-    bool keyFrame() const override{
-        return _key;
-    }
-
-    bool configFrame() const override{
-        return _config;
-    }
 private:
-    Frame::Ptr _frame;
-    BufferRaw::Ptr _buffer;
-    TrackType _trackType;
-    CodecId _codec;
-    bool _key;
-    bool _config;
+    Buffer::Ptr _buf;
 };
 
+/**
+ * 合并一些时间戳相同的frame
+ */
+class FrameMerger {
+public:
+    using onOutput = function<void(uint32_t dts, uint32_t pts, const Buffer::Ptr &buffer, bool have_key_frame)>;
+    using Ptr = std::shared_ptr<FrameMerger>;
+    enum {
+        none = 0,
+        h264_prefix,
+        mp4_nal_size,
+    };
+
+    FrameMerger(int type);
+    ~FrameMerger() = default;
+
+    void clear();
+    void inputFrame(const Frame::Ptr &frame, const onOutput &cb, BufferLikeString *buffer = nullptr);
+
+private:
+    bool willFlush(const Frame::Ptr &frame) const;
+    void doMerge(BufferLikeString &buffer, const Frame::Ptr &frame) const;
+
+private:
+    int _type;
+    bool _have_decode_able_frame = false;
+    List<Frame::Ptr> _frame_cache;
+};
 
 }//namespace mediakit
-
 #endif //ZLMEDIAKIT_FRAME_H

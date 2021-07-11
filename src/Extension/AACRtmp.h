@@ -1,27 +1,11 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #ifndef ZLMEDIAKIT_AACRTMPCODEC_H
@@ -35,33 +19,27 @@ namespace mediakit{
 /**
  * aac Rtmp转adts类
  */
-class AACRtmpDecoder : public RtmpCodec , public ResourcePoolHelper<AACFrame> {
+class AACRtmpDecoder : public RtmpCodec{
 public:
     typedef std::shared_ptr<AACRtmpDecoder> Ptr;
 
-    AACRtmpDecoder();
+    AACRtmpDecoder() {}
     ~AACRtmpDecoder() {}
 
     /**
      * 输入Rtmp并解码
-     * @param Rtmp Rtmp数据包
-     * @param key_pos 此参数内部强制转换为false,请忽略之
+     * @param rtmp Rtmp数据包
      */
-    bool inputRtmp(const RtmpPacket::Ptr &Rtmp, bool key_pos = false) override;
-
-    TrackType getTrackType() const override{
-        return TrackAudio;
-    }
+    void inputRtmp(const RtmpPacket::Ptr &rtmp) override;
 
     CodecId getCodecId() const override{
         return CodecAAC;
     }
 
-protected:
-    void onGetAAC(const char* pcData, int iLen, uint32_t ui32TimeStamp);
-    AACFrame::Ptr obtainFrame();
-protected:
-    AACFrame::Ptr _adts;
+private:
+    void onGetAAC(const char *data, size_t len, uint32_t stamp);
+
+private:
     string _aac_cfg;
 };
 
@@ -69,7 +47,7 @@ protected:
 /**
  * aac adts转Rtmp类
  */
-class AACRtmpEncoder : public AACRtmpDecoder ,  public ResourcePoolHelper<RtmpPacket> {
+class AACRtmpEncoder : public AACRtmpDecoder{
 public:
     typedef std::shared_ptr<AACRtmpEncoder> Ptr;
 
@@ -88,11 +66,18 @@ public:
      */
     void inputFrame(const Frame::Ptr &frame) override;
 
+    /**
+     * 生成config包
+     */
+    void makeConfigPacket() override;
+
 private:
     void makeAudioConfigPkt();
+
 private:
-    uint8_t _ui8AudioFlags;
+    uint8_t _audio_flv_flags;
     AACTrack::Ptr _track;
+    string _aac_cfg;
 };
 
 }//namespace mediakit

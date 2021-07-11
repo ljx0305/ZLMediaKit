@@ -1,27 +1,11 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 
@@ -32,6 +16,7 @@
 #include "Util/mini.h"
 #include "Util/onceToken.h"
 #include "Util/NoticeCenter.h"
+#include "macros.h"
 
 using namespace std;
 using namespace toolkit;
@@ -44,64 +29,53 @@ namespace mediakit {
 //默认配置文件名为 /path/to/your/exe.ini
 //加载配置文件成功后返回true，否则返回false
 bool loadIniConfig(const char *ini_path = nullptr);
-////////////其他宏定义///////////
-#ifndef MAX
-#define MAX(a,b) ((a) > (b) ? (a) : (b) )
-#endif //MAX
-
-#ifndef MIN
-#define MIN(a,b) ((a) < (b) ? (a) : (b) )
-#endif //MIN
-
-#ifndef CLEAR_ARR
-#define CLEAR_ARR(arr) for(auto &item : arr){ item = 0;}
-#endif //CLEAR_ARR
-
-#define SERVER_NAME "ZLMediaKit-4.0"
-#define VHOST_KEY "vhost"
-#define HTTP_SCHEMA "http"
-#define RTSP_SCHEMA "rtsp"
-#define RTMP_SCHEMA "rtmp"
-#define DEFAULT_VHOST "__defaultVhost__"
 
 ////////////广播名称///////////
 namespace Broadcast {
 
 //注册或反注册MediaSource事件广播
 extern const string kBroadcastMediaChanged;
-#define BroadcastMediaChangedArgs const bool &bRegist, const string &schema,const string &vhost,const string &app,const string &stream,MediaSource &sender
+#define BroadcastMediaChangedArgs const bool &bRegist, MediaSource &sender
 
 //录制mp4文件成功后广播
 extern const string kBroadcastRecordMP4;
-#define BroadcastRecordMP4Args const Mp4Info &info
+#define BroadcastRecordMP4Args const RecordInfo &info
+
+// 录制 ts 文件后广播
+extern const string kBroadcastRecordTs;
+#define BroadcastRecordTsArgs const RecordInfo &info
 
 //收到http api请求广播
 extern const string kBroadcastHttpRequest;
-#define BroadcastHttpRequestArgs const Parser &parser,const HttpSession::HttpResponseInvoker &invoker,bool &consumed,TcpSession &sender
+#define BroadcastHttpRequestArgs const Parser &parser,const HttpSession::HttpResponseInvoker &invoker,bool &consumed,SockInfo &sender
 
-//收到http 访问文件或目录的广播，通过该事件控制访问http目录的权限
+//在http文件服务器中,收到http访问文件或目录的广播,通过该事件控制访问http目录的权限
 extern const string kBroadcastHttpAccess;
-#define BroadcastHttpAccessArgs const Parser &parser,const MediaInfo &args,const string &path,const bool &is_dir,const HttpSession::HttpAccessPathInvoker &invoker,TcpSession &sender
+#define BroadcastHttpAccessArgs const Parser &parser,const string &path,const bool &is_dir,const HttpSession::HttpAccessPathInvoker &invoker,SockInfo &sender
+
+//在http文件服务器中,收到http访问文件或目录前的广播,通过该事件可以控制http url到文件路径的映射
+//在该事件中通过自行覆盖path参数，可以做到譬如根据虚拟主机或者app选择不同http根目录的目的
+extern const string kBroadcastHttpBeforeAccess;
+#define BroadcastHttpBeforeAccessArgs const Parser &parser,string &path,SockInfo &sender
 
 //该流是否需要认证？是的话调用invoker并传入realm,否则传入空的realm.如果该事件不监听则不认证
 extern const string kBroadcastOnGetRtspRealm;
-#define BroadcastOnGetRtspRealmArgs const MediaInfo &args,const RtspSession::onGetRealm &invoker,TcpSession &sender
+#define BroadcastOnGetRtspRealmArgs const MediaInfo &args,const RtspSession::onGetRealm &invoker,SockInfo &sender
 
 //请求认证用户密码事件，user_name为用户名，must_no_encrypt如果为true，则必须提供明文密码(因为此时是base64认证方式),否则会导致认证失败
 //获取到密码后请调用invoker并输入对应类型的密码和密码类型，invoker执行时会匹配密码
 extern const string kBroadcastOnRtspAuth;
-#define BroadcastOnRtspAuthArgs const MediaInfo &args,const string &realm,const string &user_name,const bool &must_no_encrypt,const RtspSession::onAuth &invoker,TcpSession &sender
+#define BroadcastOnRtspAuthArgs const MediaInfo &args,const string &realm,const string &user_name,const bool &must_no_encrypt,const RtspSession::onAuth &invoker,SockInfo &sender
 
 //推流鉴权结果回调对象
 //如果errMessage为空则代表鉴权成功
 //enableHls: 是否允许转换hls
 //enableMP4: 是否运行MP4录制
-//enableRtxp: rtmp推流时是否运行转rtsp；rtsp推流时，是否允许转rtmp
-typedef std::function<void(const string &errMessage,bool enableRtxp,bool enableHls,bool enableMP4)> PublishAuthInvoker;
+typedef std::function<void(const string &errMessage, bool enableHls, bool enableMP4)> PublishAuthInvoker;
 
 //收到rtsp/rtmp推流事件广播，通过该事件控制推流鉴权
 extern const string kBroadcastMediaPublish;
-#define BroadcastMediaPublishArgs const MediaInfo &args,const Broadcast::PublishAuthInvoker &invoker,TcpSession &sender
+#define BroadcastMediaPublishArgs const MediaInfo &args,const Broadcast::PublishAuthInvoker &invoker,SockInfo &sender
 
 //播放鉴权结果回调对象
 //如果errMessage为空则代表鉴权成功
@@ -109,19 +83,19 @@ typedef std::function<void(const string &errMessage)> AuthInvoker;
 
 //播放rtsp/rtmp/http-flv事件广播，通过该事件控制播放鉴权
 extern const string kBroadcastMediaPlayed;
-#define BroadcastMediaPlayedArgs const MediaInfo &args,const Broadcast::AuthInvoker &invoker,TcpSession &sender
+#define BroadcastMediaPlayedArgs const MediaInfo &args,const Broadcast::AuthInvoker &invoker,SockInfo &sender
 
 //shell登录鉴权
 extern const string kBroadcastShellLogin;
-#define BroadcastShellLoginArgs const string &user_name,const string &passwd,const Broadcast::AuthInvoker &invoker,TcpSession &sender
+#define BroadcastShellLoginArgs const string &user_name,const string &passwd,const Broadcast::AuthInvoker &invoker,SockInfo &sender
 
 //停止rtsp/rtmp/http-flv会话后流量汇报事件广播
 extern const string kBroadcastFlowReport;
-#define BroadcastFlowReportArgs const MediaInfo &args,const uint64_t &totalBytes,const uint64_t &totalDuration,const bool &isPlayer,TcpSession &sender
+#define BroadcastFlowReportArgs const MediaInfo &args,const uint64_t &totalBytes,const uint64_t &totalDuration,const bool &isPlayer, SockInfo &sender
 
 //未找到流后会广播该事件，请在监听该事件后去拉流或其他方式产生流，这样就能按需拉流了
 extern const string kBroadcastNotFoundStream;
-#define BroadcastNotFoundStreamArgs const MediaInfo &args,TcpSession &sender
+#define BroadcastNotFoundStreamArgs const MediaInfo &args,SockInfo &sender, const function<void()> &closePlayer
 
 //某个流无人消费时触发，目的为了实现无人观看时主动断开拉流等业务逻辑
 extern const string kBroadcastStreamNoneReader;
@@ -155,15 +129,12 @@ extern const string kBroadcastReloadConfig;
         static type arg = mINI::Instance()[key]; \
         LISTEN_RELOAD_KEY(arg,key);
 
-
-//兼容老代码
-#define GET_CONFIG_AND_REGISTER GET_CONFIG
-#define BroadcastRtmpPublishArgs BroadcastMediaPublishArgs
-#define kBroadcastRtmpPublish kBroadcastMediaPublish
 } //namespace Broadcast
 
 ////////////通用配置///////////
 namespace General{
+//每个流媒体服务器的ID（GUID）
+extern const string kMediaServerId;
 //流量汇报事件流量阈值,单位KB，默认1MB
 extern const string kFlowThreshold;
 //流无人观看并且超过若干时间后才触发kBroadcastStreamNoneReader事件
@@ -175,13 +146,28 @@ extern const string kStreamNoneReaderDelayMS;
 extern const string kMaxStreamWaitTimeMS;
 //是否启动虚拟主机
 extern const string kEnableVhost;
-//超低延时模式，默认打开，打开后会降低延时但是转发性能会稍差
-extern const string kUltraLowDelay;
 //拉流代理时是否添加静音音频
 extern const string kAddMuteAudio;
 //拉流代理时如果断流再重连成功是否删除前一次的媒体流数据，如果删除将重新开始，
 //如果不删除将会接着上一次的数据继续写(录制hls/mp4时会继续在前一个文件后面写)
 extern const string kResetWhenRePlay;
+//是否默认推流时转换成hls，hook接口(on_publish)中可以覆盖该设置
+extern const string kPublishToHls ;
+//是否默认推流时mp4录像，hook接口(on_publish)中可以覆盖该设置
+extern const string kPublishToMP4 ;
+//合并写缓存大小(单位毫秒)，合并写指服务器缓存一定的数据后才会一次性写入socket，这样能提高性能，但是会提高延时
+//开启后会同时关闭TCP_NODELAY并开启MSG_MORE
+extern const string kMergeWriteMS ;
+//全局的时间戳覆盖开关，在转协议时，对frame进行时间戳覆盖
+extern const string kModifyStamp;
+//按需转协议的开关
+extern const string kHlsDemand;
+extern const string kRtspDemand;
+extern const string kRtmpDemand;
+extern const string kTSDemand;
+extern const string kFMP4Demand;
+//转协议是否全局开启或忽略音频
+extern const string kEnableAudio;
 }//namespace General
 
 
@@ -193,14 +179,14 @@ extern const string kSendBufSize;
 extern const string kMaxReqSize;
 //http keep-alive秒数
 extern const string kKeepAliveSecond;
-//http keep-alive最大请求数
-extern const string kMaxReqCount;
 //http 字符编码
 extern const string kCharSet;
 //http 服务器根目录
 extern const string kRootPath;
 //http 404错误提示内容
 extern const string kNotFound;
+//是否显示文件夹菜单
+extern const string kDirMenu;
 }//namespace Http
 
 ////////////SHELL配置///////////
@@ -223,12 +209,11 @@ extern const string kKeepAliveSecond;
 //假定您的拉流源地址不是264或265或AAC，那么你可以使用直接代理的方式来支持rtsp代理
 //默认开启rtsp直接代理，rtmp由于没有这些问题，是强制开启直接代理的
 extern const string kDirectProxy;
-//rtsp推流是否修改时间戳
-extern const string kModifyStamp;
 } //namespace Rtsp
 
 ////////////RTMP服务器配置///////////
 namespace Rtmp {
+//rtmp推流时间戳覆盖开关
 extern const string kModifyStamp;
 //握手超时时间，默认15秒
 extern const string kHandshakeSecond;
@@ -243,12 +228,6 @@ namespace Rtp {
 extern const string kVideoMtuSize;
 //RTP打包最大MTU,公网情况下更小
 extern const string kAudioMtuSize;
-//RTP排序缓存最大个数
-extern const string kMaxRtpCount;
-//如果RTP序列正确次数累计达到该数字就启动清空排序缓存
-extern const string kClearCount;
-//最大RTP时间为13个小时，每13小时回环一次
-extern const string kCycleMS;
 } //namespace Rtsp
 
 ////////////组播配置///////////
@@ -283,14 +262,27 @@ extern const string kFileRepeat;
 namespace Hls {
 //HLS切片时长,单位秒
 extern const string kSegmentDuration;
-//HLS切片个数，如果设置为0，则不删除切片，而是保存为点播
+//m3u8文件中HLS切片个数，如果设置为0，则不删除切片，而是保存为点播
 extern const string kSegmentNum;
+//HLS切片从m3u8文件中移除后，继续保留在磁盘上的个数
+extern const string kSegmentRetain;
 //HLS文件写缓存大小
 extern const string kFileBufSize;
 //录制文件路径
 extern const string kFilePath;
+// 是否广播 ts 切片完成通知
+extern const string kBroadcastRecordTs;
+//hls直播文件删除延时，单位秒
+extern const string kDeleteDelaySec;
 } //namespace Hls
 
+////////////Rtp代理相关配置///////////
+namespace RtpProxy {
+//rtp调试数据保存目录,置空则不生成
+extern const string kDumpDir;
+//rtp接收超时时间
+extern const string kTimeoutSec;
+} //namespace RtpProxy
 
 /**
  * rtsp/rtmp播放器、推流器相关设置名，
@@ -317,6 +309,8 @@ extern const string kMediaTimeoutMS;
 extern const string kBeatIntervalMS;
 //Track编码格式探测最大时间，单位毫秒，默认2000
 extern const string kMaxAnalysisMS;
+//是否为性能测试模式，性能测试模式开启后不会解析rtp或rtmp包
+extern const string kBenchmarkMode;
 }
 }  // namespace mediakit
 

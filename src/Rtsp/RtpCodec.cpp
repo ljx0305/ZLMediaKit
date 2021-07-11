@@ -1,71 +1,49 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #include "RtpCodec.h"
 
 namespace mediakit{
 
-RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, unsigned int len, bool mark, uint32_t uiStamp) {
-    uint16_t ui16RtpLen = len + 12;
-    uint32_t ts = htonl((_ui32SampleRate / 1000) * uiStamp);
-    uint16_t sq = htons(_ui16Sequence);
-    uint32_t sc = htonl(_ui32Ssrc);
+RtpPacket::Ptr RtpInfo::makeRtp(TrackType type, const void* data, size_t len, bool mark, uint32_t stamp) {
+    uint16_t payload_len = (uint16_t) (len + RtpPacket::kRtpHeaderSize);
+    auto rtp = RtpPacket::create();
+    rtp->setCapacity(payload_len + RtpPacket::kRtpTcpHeaderSize);
+    rtp->setSize(payload_len + RtpPacket::kRtpTcpHeaderSize);
+    rtp->sample_rate = _sample_rate;
+    rtp->type = type;
 
-    auto rtppkt = ResourcePoolHelper<RtpPacket>::obtainObj();
-    rtppkt->setCapacity(len + 16);
-    rtppkt->setSize(len + 16);
+    //rtsp over tcp 头
+    auto ptr = (uint8_t *) rtp->data();
+    ptr[0] = '$';
+    ptr[1] = _interleaved;
+    ptr[2] = payload_len >> 8;
+    ptr[3] = payload_len & 0xFF;
 
-    unsigned char *pucRtp = (unsigned char *)rtppkt->data();
-    pucRtp[0] = '$';
-    pucRtp[1] = _ui8Interleaved;
-    pucRtp[2] = ui16RtpLen >> 8;
-    pucRtp[3] = ui16RtpLen & 0x00FF;
-    pucRtp[4] = 0x80;
-    pucRtp[5] = (mark << 7) | _ui8PlayloadType;
-    memcpy(&pucRtp[6], &sq, 2);
-    memcpy(&pucRtp[8], &ts, 4);
-    //ssrc
-    memcpy(&pucRtp[12], &sc, 4);
+    //rtp头
+    auto header = rtp->getHeader();
+    header->version = RtpPacket::kRtpVersion;
+    header->padding = 0;
+    header->ext = 0;
+    header->csrc = 0;
+    header->mark = mark;
+    header->pt = _pt;
+    header->seq = htons(_seq++);
+    header->stamp = htonl(uint64_t(stamp) * _sample_rate / 1000);
+    header->ssrc = htonl(_ssrc);
 
-    if(data){
-        //playload
-        memcpy(&pucRtp[16], data, len);
+    //有效负载
+    if (data) {
+        memcpy(&ptr[RtpPacket::kRtpHeaderSize + RtpPacket::kRtpTcpHeaderSize], data, len);
     }
-
-    rtppkt->PT = _ui8PlayloadType;
-    rtppkt->interleaved = _ui8Interleaved;
-    rtppkt->mark = mark;
-    rtppkt->sequence = _ui16Sequence;
-    rtppkt->timeStamp = uiStamp;
-    rtppkt->ssrc = _ui32Ssrc;
-    rtppkt->type = type;
-    rtppkt->offset = 16;
-    _ui16Sequence++;
-    _ui32TimeStamp = uiStamp;
-    return rtppkt;
+    return rtp;
 }
 
 }//namespace mediakit

@@ -1,27 +1,11 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #include "FlvMuxer.h"
@@ -66,13 +50,27 @@ void FlvMuxer::start(const EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &
         }
         strongSelf->onDetach();
     });
-    _ring_reader->setReadCB([weakSelf](const RtmpPacket::Ptr &pkt){
+
+    //音频同步于视频
+    _stamp[0].syncTo(_stamp[1]);
+    _ring_reader->setReadCB([weakSelf](const RtmpMediaSource::RingDataType &pkt){
         auto strongSelf = weakSelf.lock();
         if(!strongSelf){
             return;
         }
-        strongSelf->onWriteRtmp(pkt);
+
+        size_t i = 0;
+        auto size = pkt->size();
+        pkt->for_each([&](const RtmpPacket::Ptr &rtmp){
+            strongSelf->onWriteRtmp(rtmp, ++i == size);
+        });
     });
+}
+
+BufferRaw::Ptr FlvMuxer::obtainBuffer(const void *data, size_t len) {
+    auto buffer = BufferRaw::create();
+    buffer->assign((const char *) data, len);
+    return buffer;
 }
 
 void FlvMuxer::onWriteFlvHeader(const RtmpMediaSource::Ptr &mediaSrc) {
@@ -81,10 +79,10 @@ void FlvMuxer::onWriteFlvHeader(const RtmpMediaSource::Ptr &mediaSrc) {
     bool is_have_audio = false,is_have_video = false;
 
     mediaSrc->getConfigFrame([&](const RtmpPacket::Ptr &pkt){
-        if(pkt->typeId == MSG_VIDEO){
+        if(pkt->type_id == MSG_VIDEO){
             is_have_video = true;
         }
-        if(pkt->typeId == MSG_AUDIO){
+        if(pkt->type_id == MSG_AUDIO){
             is_have_audio = true;
         }
     });
@@ -100,11 +98,11 @@ void FlvMuxer::onWriteFlvHeader(const RtmpMediaSource::Ptr &mediaSrc) {
     }
 
     //flv header
-    onWrite(std::make_shared<BufferRaw>(flv_file_header, sizeof(flv_file_header) - 1));
+    onWrite(obtainBuffer(flv_file_header, sizeof(flv_file_header) - 1), false);
 
     auto size = htonl(0);
     //PreviousTagSize0 Always 0
-    onWrite(std::make_shared<BufferRaw>((char *)&size,4));
+    onWrite(obtainBuffer((char *)&size,4), false);
 
 
     auto &metadata = mediaSrc->getMetaData();
@@ -113,12 +111,12 @@ void FlvMuxer::onWriteFlvHeader(const RtmpMediaSource::Ptr &mediaSrc) {
         //其实metadata没什么用，有些推流器不产生metadata
         AMFEncoder invoke;
         invoke << "onMetaData" << metadata;
-        onWriteFlvTag(MSG_DATA, std::make_shared<BufferString>(invoke.data()), 0);
+        onWriteFlvTag(MSG_DATA, std::make_shared<BufferString>(invoke.data()), 0, false);
     }
 
     //config frame
     mediaSrc->getConfigFrame([&](const RtmpPacket::Ptr &pkt){
-        onWriteRtmp(pkt);
+        onWriteRtmp(pkt, true);
     });
 }
 
@@ -141,29 +139,29 @@ public:
 #pragma pack(pop)
 #endif // defined(_WIN32)
 
-void FlvMuxer::onWriteFlvTag(const RtmpPacket::Ptr &pkt, uint32_t ui32TimeStamp) {
-    onWriteFlvTag(pkt->typeId,pkt,ui32TimeStamp);
+void FlvMuxer::onWriteFlvTag(const RtmpPacket::Ptr &pkt, uint32_t time_stamp , bool flush) {
+    onWriteFlvTag(pkt->type_id, pkt, time_stamp, flush);
 }
 
-void FlvMuxer::onWriteFlvTag(uint8_t ui8Type, const Buffer::Ptr &buffer, uint32_t ui32TimeStamp) {
+void FlvMuxer::onWriteFlvTag(uint8_t type, const Buffer::Ptr &buffer, uint32_t time_stamp, bool flush) {
     RtmpTagHeader header;
-    header.type = ui8Type;
-    set_be24(header.data_size, buffer->size());
-    header.timestamp_ex = (uint8_t) ((ui32TimeStamp >> 24) & 0xff);
-    set_be24(header.timestamp,ui32TimeStamp & 0xFFFFFF);
+    header.type = type;
+    set_be24(header.data_size, (uint32_t)buffer->size());
+    header.timestamp_ex = (uint8_t) ((time_stamp >> 24) & 0xff);
+    set_be24(header.timestamp, time_stamp & 0xFFFFFF);
     //tag header
-    onWrite(std::make_shared<BufferRaw>((char *)&header, sizeof(header)));
+    onWrite(obtainBuffer((char *)&header, sizeof(header)), false);
     //tag data
-    onWrite(buffer);
-    auto size = htonl((buffer->size() + sizeof(header)));
+    onWrite(buffer, false);
+    uint32_t size = htonl((uint32_t)(buffer->size() + sizeof(header)));
     //PreviousTagSize
-    onWrite(std::make_shared<BufferRaw>((char *)&size,4));
+    onWrite(obtainBuffer((char *)&size,4), flush);
 }
 
-void FlvMuxer::onWriteRtmp(const RtmpPacket::Ptr &pkt) {
+void FlvMuxer::onWriteRtmp(const RtmpPacket::Ptr &pkt,bool flush) {
     int64_t dts_out;
-    _stamp[pkt->typeId % 2].revise(pkt->timeStamp, 0, dts_out, dts_out);
-    onWriteFlvTag(pkt, dts_out);
+    _stamp[pkt->type_id % 2].revise(pkt->time_stamp, 0, dts_out, dts_out);
+    onWriteFlvTag(pkt, (uint32_t)dts_out,flush);
 }
 
 void FlvMuxer::stop() {
@@ -175,7 +173,7 @@ void FlvMuxer::stop() {
 
 ///////////////////////////////////////////////////////FlvRecorder/////////////////////////////////////////////////////
 void FlvRecorder::startRecord(const EventPoller::Ptr &poller,const string &vhost, const string &app, const string &stream,const string &file_path) {
-    startRecord(poller,dynamic_pointer_cast<RtmpMediaSource>(MediaSource::find(RTMP_SCHEMA,vhost,app,stream,false)),file_path);
+    startRecord(poller,dynamic_pointer_cast<RtmpMediaSource>(MediaSource::find(RTMP_SCHEMA,vhost,app,stream)),file_path);
 }
 
 void FlvRecorder::startRecord(const EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &media, const string &file_path) {
@@ -188,7 +186,7 @@ void FlvRecorder::startRecord(const EventPoller::Ptr &poller,const RtmpMediaSour
         }
     });
     //新建文件
-    _file.reset(File::createfile_file(file_path.data(),"wb"),[fileBuf](FILE *fp){
+    _file.reset(File::create_file(file_path.data(), "wb"), [fileBuf](FILE *fp){
         if(fp){
             fflush(fp);
             fclose(fp);
@@ -203,7 +201,7 @@ void FlvRecorder::startRecord(const EventPoller::Ptr &poller,const RtmpMediaSour
     start(poller,media);
 }
 
-void FlvRecorder::onWrite(const Buffer::Ptr &data) {
+void FlvRecorder::onWrite(const Buffer::Ptr &data, bool flush) {
     lock_guard<recursive_mutex> lck(_file_mtx);
     if(_file){
         fwrite(data->data(),data->size(),1,_file.get());

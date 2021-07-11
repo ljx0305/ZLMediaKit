@@ -37,10 +37,9 @@ endif ()
 set(ENABLE_HLS true)
 set(ENABLE_OPENSSL true)
 set(ENABLE_MYSQL false)
-set(ENABLE_MP4V2 true)
 set(ENABLE_FAAC false)
 set(ENABLE_X264 false)
-set(ENABLE_MP4RECORD true)
+set(ENABLE_MP4 true)
 
 #添加两个静态库
 if(ENABLE_HLS)
@@ -52,9 +51,9 @@ else()
 endif()
 
 
-if(ENABLE_MP4RECORD)
-    message(STATUS "ENABLE_MP4RECORD defined")
-    add_definitions(-DENABLE_MP4RECORD)
+if(ENABLE_MP4)
+    message(STATUS "ENABLE_MP4 defined")
+    add_definitions(-DENABLE_MP4)
 	list(APPEND LINK_LIB_LIST mov flv)
 endif()
 
@@ -66,28 +65,18 @@ if (ENABLE_OPENSSL)
     list(APPEND LINK_LIB_LIST ssl crypto)
 endif ()
 
-#查找MP4V2是否安装
-find_package(MP4V2 QUIET)
-if (MP4V2_FOUND AND ENABLE_MP4V2)
-    include_directories(${MP4V2_INCLUDE_DIR})
-    list(APPEND LINK_LIB_LIST ${MP4V2_LIBRARY})
-    add_definitions(-DENABLE_MP4V2)
-    message(STATUS "found library:${MP4V2_LIBRARY},ENABLE_MP4V2 defined")
-endif ()
-
-
 #libmpeg
 if(ENABLE_HLS)
     aux_source_directory(${MediaServer_Root}/libmpeg/include src_mpeg)
     aux_source_directory(${MediaServer_Root}/libmpeg/source src_mpeg)
     include_directories(${MediaServer_Root}/libmpeg/include)
     add_library(mpeg STATIC ${src_mpeg})
-	if(WIN32)
+	if(MSVC)
 		set_target_properties(mpeg PROPERTIES COMPILE_FLAGS  ${VS_FALGS} )
-	endif(WIN32)
+	endif()
 endif()
 
-if(ENABLE_MP4RECORD)
+if(ENABLE_MP4)
     aux_source_directory(${MediaServer_Root}/libmov/include src_mov)
     aux_source_directory(${MediaServer_Root}/libmov/source src_mov)
 	include_directories(${MediaServer_Root}/libmov/include)
@@ -96,9 +85,9 @@ if(ENABLE_MP4RECORD)
 	include_directories(${MediaServer_Root}/libflv/include)
 	add_library(mov STATIC ${src_mov})
 	add_library(flv STATIC ${src_flv})
-	if(WIN32)
+	if(MSVC)
 		set_target_properties(mov flv PROPERTIES COMPILE_FLAGS  ${VS_FALGS} )
-	endif(WIN32)
+	endif()
 endif()
 
 

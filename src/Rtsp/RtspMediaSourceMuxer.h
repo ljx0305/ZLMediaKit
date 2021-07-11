@@ -1,27 +1,11 @@
 ﻿/*
- * MIT License
+ * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
  *
- * Copyright (c) 2016-2019 xiongziliang <771730766@qq.com>
+ * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
  *
- * This file is part of ZLMediaKit(https://github.com/xiongziliang/ZLMediaKit).
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Use of this source code is governed by MIT license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
  */
 
 #ifndef ZLMEDIAKIT_RTSPMEDIASOURCEMUXER_H
@@ -32,7 +16,8 @@
 
 namespace mediakit {
 
-class RtspMediaSourceMuxer : public RtspMuxer {
+class RtspMediaSourceMuxer : public RtspMuxer, public MediaSourceEventInterceptor,
+                             public std::enable_shared_from_this<RtspMediaSourceMuxer> {
 public:
     typedef std::shared_ptr<RtspMediaSourceMuxer> Ptr;
 
@@ -40,26 +25,59 @@ public:
                          const string &strApp,
                          const string &strId,
                          const TitleSdp::Ptr &title = nullptr) : RtspMuxer(title){
-        _mediaSouce = std::make_shared<RtspMediaSource>(vhost,strApp,strId);
-        getRtpRing()->setDelegate(_mediaSouce);
+        _media_src = std::make_shared<RtspMediaSource>(vhost,strApp,strId);
+        getRtpRing()->setDelegate(_media_src);
     }
-    virtual ~RtspMediaSourceMuxer(){}
+
+    ~RtspMediaSourceMuxer() override{}
 
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener){
-        _mediaSouce->setListener(listener);
+        setDelegate(listener);
+        _media_src->setListener(shared_from_this());
     }
+
     int readerCount() const{
-        return _mediaSouce->readerCount();
+        return _media_src->readerCount();
     }
+
     void setTimeStamp(uint32_t stamp){
-        _mediaSouce->setTimeStamp(stamp);
+        _media_src->setTimeStamp(stamp);
     }
-private:
-    void onAllTrackReady() override {
-        _mediaSouce->onGetSDP(getSdp());
+
+    void onAllTrackReady(){
+        _media_src->setSdp(getSdp());
     }
+
+    void onReaderChanged(MediaSource &sender, int size) override {
+        GET_CONFIG(bool, rtsp_demand, General::kRtspDemand);
+        _enabled = rtsp_demand ? size : true;
+        if (!size && rtsp_demand) {
+            _clear_cache = true;
+        }
+        MediaSourceEventInterceptor::onReaderChanged(sender, size);
+    }
+
+    void inputFrame(const Frame::Ptr &frame) override {
+        GET_CONFIG(bool, rtsp_demand, General::kRtspDemand);
+        if (_clear_cache && rtsp_demand) {
+            _clear_cache = false;
+            _media_src->clearCache();
+        }
+        if (_enabled || !rtsp_demand) {
+            RtspMuxer::inputFrame(frame);
+        }
+    }
+
+    bool isEnabled() {
+        GET_CONFIG(bool, rtsp_demand, General::kRtspDemand);
+        //缓存尚未清空时，还允许触发inputFrame函数，以便及时清空缓存
+        return rtsp_demand ? (_clear_cache ? true : _enabled) : true;
+    }
+
 private:
-    RtspMediaSource::Ptr _mediaSouce;
+    bool _enabled = true;
+    bool _clear_cache = false;
+    RtspMediaSource::Ptr _media_src;
 };
 
 
